@@ -31,7 +31,9 @@ struct redisCluster;
 
 typedef struct redisClusterConnection {
     redisContext *context;
+    // 待发送到cluster的命令
     list *requests_to_send;
+    // 待cluster响应的命令
     list *requests_pending;
     int connected;
     int has_read_handler;

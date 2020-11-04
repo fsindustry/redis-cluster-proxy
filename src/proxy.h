@@ -47,11 +47,16 @@ typedef struct clientRequest{
     int query_offset;
     int is_multibulk;
     int argc;
+    // 当前请求包含的命令个数
     int num_commands;
+    // 当前命令包含的字段个数
     long long pending_bulks;
     int current_bulk_length;
+    // 命令每个字段在buffer的起始偏移量
     int *offsets;
+    // 命令每个字段的长度
     int *lengths;
+    // 字段个数
     int offsets_size;
     int slot;
     clusterNode *node;
@@ -62,15 +67,21 @@ typedef struct clientRequest{
 } clientRequest;
 
 typedef struct {
+    // 主线程eventloop
     aeEventLoop *main_loop;
+    // 服务端socket句柄
     int fds[2];
     int fd_count;
     int tcp_backlog;
     char neterr[ANET_ERR_LEN];
+    // 工作线程数组
     struct proxyThread **threads;
+    // 客户端连接数
     _Atomic uint64_t numclients;
+    // 命令列表
     rax *commands;
     int min_reserved_fds;
+    // 启动时间
     time_t start_time;
     sds configfile;
 } redisClusterProxy;

@@ -21,6 +21,7 @@
 #include "redis_config.h"
 
 typedef struct {
+    // 端口
     int port;
     char *cluster_address;
     char *entry_node_host;

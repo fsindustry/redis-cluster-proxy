@@ -70,6 +70,7 @@
 
 typedef struct proxyThread {
     int thread_id;
+    // 线程通信的管道，0为读取，1为写入
     int io[2];
     pthread_t thread;
     redisCluster *cluster;
@@ -86,23 +87,40 @@ redisClusterProxyConfig config;
 /* Forward declarations. */
 
 static proxyThread *createProxyThread(int index);
+
 static void freeProxyThread(proxyThread *thread);
+
 static void *execProxyThread(void *ptr);
+
 static client *createClient(int fd, char *ip);
+
 static void freeClient(client *c);
+
 static clientRequest *createRequest(client *c);
+
 void readQuery(aeEventLoop *el, int fd, void *privdata, int mask);
+
 static int writeToClient(client *c);
+
 static int writeToCluster(aeEventLoop *el, int fd, clientRequest *req);
+
 static void writeToClusterHandler(aeEventLoop *el, int fd, void *privdata,
                                   int mask);
+
 static void readClusterReply(aeEventLoop *el, int fd, void *privdata, int mask);
+
 static clusterNode *getRequestNode(clientRequest *req, sds *err);
+
 static clientRequest *handleNextRequestToCluster(clusterNode *node);
+
 static clientRequest *getFirstQueuedRequest(list *queue, int *is_empty);
+
 static int enqueueRequest(clientRequest *req, int queue_type);
+
 static void dequeueRequest(clientRequest *req, int queue_type);
+
 static int sendMessageToThread(proxyThread *thread, sds buf);
+
 static int installIOHandler(aeEventLoop *el, int fd, int mask, aeFileProc *proc,
                             void *data, int retried);
 
@@ -160,8 +178,7 @@ static int __hiredisReadReplyFromBuffer(redisReader *r, void **reply) {
 /* Custom Commands */
 
 static sds proxySubCommandConfig(clientRequest *r, sds option, sds value,
-                                 sds *err)
-{
+                                 sds *err) {
     void *opt = NULL;
     sds reply = NULL;
     int ok = 0;
@@ -253,8 +270,7 @@ static sds genInfoString(sds section) {
     sds info = sdsempty();
     int sections = 0;
     if (default_section || all_sections ||
-        !strcasecmp("proxy", section))
-    {
+        !strcasecmp("proxy", section)) {
         static int call_uname = 1;
         static struct utsname name;
         time_t uptime = time(NULL) - proxy.start_time;
@@ -263,54 +279,52 @@ static sds genInfoString(sds section) {
             uname(&name);
             call_uname = 0;
         }
-        if (sections++) info = sdscat(info,"\r\n");
+        if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(info,
-                    "#Proxy\r\n"
-                    "proxy_version:%s\r\n"
-                    "os:%s %s %s\r\n"
-                    "gcc_version:%d.%d.%d\r\n"
-                    "process_id:%ld\r\n"
-                    "threads:%d\n"
-                    "tcp_port:%d\r\n"
-                    "uptime_in_seconds:%jd\r\n"
-                    "uptime_in_days:%jd\r\n"
-                    "config_file:%s\r\n",
-                    REDIS_CLUSTER_PROXY_VERSION,
-                    name.sysname, name.release, name.machine,
-    #ifdef __GNUC__
-                    __GNUC__,__GNUC_MINOR__,__GNUC_PATCHLEVEL__,
-    #else
-                    0,0,0,
-    #endif
-                    (long) getpid(),
-                    config.num_threads,
-                    config.port,
-                    (intmax_t)uptime,
-                    (intmax_t)(uptime/(3600*24)),
-                    (proxy.configfile ? proxy.configfile : "")
+                            "#Proxy\r\n"
+                            "proxy_version:%s\r\n"
+                            "os:%s %s %s\r\n"
+                            "gcc_version:%d.%d.%d\r\n"
+                            "process_id:%ld\r\n"
+                            "threads:%d\n"
+                            "tcp_port:%d\r\n"
+                            "uptime_in_seconds:%jd\r\n"
+                            "uptime_in_days:%jd\r\n"
+                            "config_file:%s\r\n",
+                            REDIS_CLUSTER_PROXY_VERSION,
+                            name.sysname, name.release, name.machine,
+#ifdef __GNUC__
+                __GNUC__,__GNUC_MINOR__,__GNUC_PATCHLEVEL__,
+#else
+                            0, 0, 0,
+#endif
+                            (long) getpid(),
+                            config.num_threads,
+                            config.port,
+                            (intmax_t) uptime,
+                            (intmax_t)(uptime / (3600 * 24)),
+                            (proxy.configfile ? proxy.configfile : "")
         );
     }
     if (default_section || all_sections ||
-        !strcasecmp("clients", section))
-    {
-        if (sections++) info = sdscat(info,"\r\n");
+        !strcasecmp("clients", section)) {
+        if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(info,
-                     "#Clients\r\n"
-                     "connected_clients:%llu\r\n",
-                     proxy.numclients
+                            "#Clients\r\n"
+                            "connected_clients:%llu\r\n",
+                            proxy.numclients
         );
     }
     if (default_section || all_sections ||
-        !strcasecmp("cluster", section))
-    {
-        if (sections++) info = sdscat(info,"\r\n");
+        !strcasecmp("cluster", section)) {
+        if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(info,
-                     "#Cluster\r\n"
-                     "address:%s\r\n"
-                     "entry_node:%s:%d",
-                     (config.cluster_address ? config.cluster_address : ""),
-                     (config.entry_node_host ? config.entry_node_host : ""),
-                     config.entry_node_port
+                            "#Cluster\r\n"
+                            "address:%s\r\n"
+                            "entry_node:%s:%d",
+                            (config.cluster_address ? config.cluster_address : ""),
+                            (config.entry_node_host ? config.entry_node_host : ""),
+                            config.entry_node_port
 
         );
     }
@@ -404,7 +418,7 @@ int proxyCommand(void *r) {
         err = sdsnew("Unsupported subcommand ");
         err = sdscatfmt(err, "'%S' for command PROXY", subcmd);
     }
-final:
+    final:
     if (err != NULL) {
         addReplyError(req->client, err, req->id);
         sdsfree(err);
@@ -428,7 +442,7 @@ static void dumpQueue(clusterNode *node, int thread_id, int type) {
     msg = sdscatprintf(msg, "%s:%d[thread %d] -> %s",
                        node->ip, node->port, thread_id,
                        (type == QUEUE_TYPE_PENDING ? "requests pending: [" :
-                                                     "requests to send: ["));
+                        "requests to send: ["));
     listIter li;
     listNode *ln;
     listRewind(queue, &li);
@@ -448,14 +462,13 @@ redisCommandDef *getRedisCommand(sds name) {
     redisCommandDef *cmd = NULL;
     raxIterator iter;
     raxStart(&iter, proxy.commands);
-    if (raxSeek(&iter, "=", (unsigned char*) name, sdslen(name)))
+    if (raxSeek(&iter, "=", (unsigned char *) name, sdslen(name)))
         if (raxNext(&iter)) cmd = (redisCommandDef *) iter.data;
     raxStop(&iter);
     return cmd;
 }
 
-static int parseAddress(char *address, char **ip, int *port, char **hostsocket)
-{
+static int parseAddress(char *address, char **ip, int *port, char **hostsocket) {
     *ip = NULL;
     *hostsocket = NULL;
     *port = 0;
@@ -476,25 +489,25 @@ static int parseAddress(char *address, char **ip, int *port, char **hostsocket)
 
 static void printHelp(void) {
     fprintf(stderr, "Usage: redis-cluster-proxy [OPTIONS] "
-            "[cluster_host:cluster_port]\n"
-            "  -c <file>            Configuration file\n"
-            "  -p, --port <port>    Port (default: %d)\n"
-            "  --max-clients <n>    Max clients (default: %d)\n"
-            "  --threads <n>        Thread number (default: %d, max: %d)\n"
-            "  --tcpkeepalive       TCP Keep Alive (default: %d)\n"
-            "  --tcp-backlog        TCP Backlog (default: %d)\n"
-            "  --daemonize          Execute the proxy in background\n"
-            "  -a, --auth <passw>   Authentication password\n"
-            "  --disable-colors     Disable colorized output\n"
-            "  --log-level <level>  Minimum log level: (default: info)\n"
-            "                       (debug|info|success|warning|error)\n"
-            "  --dump-queries       Dump query args (only for log-level "
-                                    "'debug') \n"
-            "  --dump-buffer        Dump query buffer (only for log-level "
-                                    "'debug') \n"
-            "  --dump-queues        Dump request queues (only for log-level "
-                                    "'debug') \n"
-            "  -h, --help         Print this help\n",
+                    "[cluster_host:cluster_port]\n"
+                    "  -c <file>            Configuration file\n"
+                    "  -p, --port <port>    Port (default: %d)\n"
+                    "  --max-clients <n>    Max clients (default: %d)\n"
+                    "  --threads <n>        Thread number (default: %d, max: %d)\n"
+                    "  --tcpkeepalive       TCP Keep Alive (default: %d)\n"
+                    "  --tcp-backlog        TCP Backlog (default: %d)\n"
+                    "  --daemonize          Execute the proxy in background\n"
+                    "  -a, --auth <passw>   Authentication password\n"
+                    "  --disable-colors     Disable colorized output\n"
+                    "  --log-level <level>  Minimum log level: (default: info)\n"
+                    "                       (debug|info|success|warning|error)\n"
+                    "  --dump-queries       Dump query args (only for log-level "
+                    "'debug') \n"
+                    "  --dump-buffer        Dump query buffer (only for log-level "
+                    "'debug') \n"
+                    "  --dump-queues        Dump request queues (only for log-level "
+                    "'debug') \n"
+                    "  -h, --help         Print this help\n",
             DEFAULT_PORT, DEFAULT_MAX_CLIENTS, DEFAULT_THREADS, MAX_THREADS,
             DEFAULT_TCP_KEEPALIVE, DEFAULT_TCP_BACKLOG);
 }
@@ -506,7 +519,7 @@ int parseOptions(int argc, char **argv) {
         char *arg = argv[i];
         if ((!strcmp("-p", arg) || !strcmp("--port", arg)) && !lastarg)
             config.port = atoi(argv[++i]);
-        else if ((!strcmp(argv[i],"-a") || !strcmp("--auth", arg))&& !lastarg)
+        else if ((!strcmp(argv[i], "-a") || !strcmp("--auth", arg)) && !lastarg)
             config.auth = argv[++i];
         else if (!strcmp("--disable-colors", arg))
             config.use_colors = 0;
@@ -532,7 +545,7 @@ int parseOptions(int argc, char **argv) {
             config.num_threads = atoi(argv[++i]);
             if (config.num_threads > MAX_THREADS) {
                 fprintf(stderr, "Warning: maximum threads allowed: %d\n",
-                                MAX_THREADS);
+                        MAX_THREADS);
                 config.num_threads = MAX_THREADS;
             } else if (config.num_threads < 1) config.num_threads = 1;
         } else if (!strcmp("--log-level", arg) && !lastarg) {
@@ -563,7 +576,7 @@ int parseOptions(int argc, char **argv) {
         }
     }
     return i;
-invalid:
+    invalid:
     fprintf(stderr, "Invalid option '%s' or invalid number of option "
                     "arguments\n\n", argv[i]);
     printHelp();
@@ -582,7 +595,7 @@ void adjustOpenFilesLimit(void) {
     rlim_t maxfiles = config.maxclients + proxy.min_reserved_fds;
     struct rlimit limit;
 
-    if (getrlimit(RLIMIT_NOFILE,&limit) == -1) {
+    if (getrlimit(RLIMIT_NOFILE, &limit) == -1) {
         proxyLogWarn("Unable to obtain the current NOFILE limit (%s), "
                      "assuming 1024 and setting the max clients configuration "
                      "accordingly.\n", strerror(errno));
@@ -599,12 +612,12 @@ void adjustOpenFilesLimit(void) {
             /* Try to set the file limit to match 'maxfiles' or at least
              * to the higher value supported less than maxfiles. */
             bestlimit = maxfiles;
-            while(bestlimit > oldlimit) {
+            while (bestlimit > oldlimit) {
                 rlim_t decr_step = 16;
 
                 limit.rlim_cur = bestlimit;
                 limit.rlim_max = bestlimit;
-                if (setrlimit(RLIMIT_NOFILE,&limit) != -1) break;
+                if (setrlimit(RLIMIT_NOFILE, &limit) != -1) break;
                 setrlimit_error = errno;
 
                 /* We failed to set file limit to 'bestlimit'. Try with a
@@ -625,30 +638,30 @@ void adjustOpenFilesLimit(void) {
                  * we test indirectly via bestlimit. */
                 if (bestlimit <= (rlim_t) proxy.min_reserved_fds) {
                     proxyLogWarn("Your current 'ulimit -n' "
-                        "of %llu is not enough for the server to start. "
-                        "Please increase your open file limit to at least "
-                        "%llu. Exiting.\n",
-                        (unsigned long long) oldlimit,
-                        (unsigned long long) maxfiles);
+                                 "of %llu is not enough for the server to start. "
+                                 "Please increase your open file limit to at least "
+                                 "%llu. Exiting.\n",
+                                 (unsigned long long) oldlimit,
+                                 (unsigned long long) maxfiles);
                     exit(1);
                 }
                 proxyLogWarn("You requested maxclients of %d "
-                    "requiring at least %llu max file descriptors.\n",
-                    old_maxclients,
-                    (unsigned long long) maxfiles);
+                             "requiring at least %llu max file descriptors.\n",
+                             old_maxclients,
+                             (unsigned long long) maxfiles);
                 proxyLogWarn("Server can't set maximum open files "
-                    "to %llu because of OS error: %s.\n",
-                    (unsigned long long) maxfiles, strerror(setrlimit_error));
+                             "to %llu because of OS error: %s.\n",
+                             (unsigned long long) maxfiles, strerror(setrlimit_error));
                 proxyLogWarn("Current maximum open files is %llu. "
-                    "maxclients has been reduced to %d to compensate for "
-                    "low ulimit. "
-                    "If you need higher maxclients increase 'ulimit -n'.\n",
-                    (unsigned long long) bestlimit, config.maxclients);
+                             "maxclients has been reduced to %d to compensate for "
+                             "low ulimit. "
+                             "If you need higher maxclients increase 'ulimit -n'.\n",
+                             (unsigned long long) bestlimit, config.maxclients);
             } else {
                 proxyLogInfo("Increased maximum number of open files "
-                    "to %llu (it was originally set to %llu).\n",
-                    (unsigned long long) maxfiles,
-                    (unsigned long long) oldlimit);
+                             "to %llu (it was originally set to %llu).\n",
+                             (unsigned long long) maxfiles,
+                             (unsigned long long) oldlimit);
             }
         }
     }
@@ -665,8 +678,8 @@ static void checkTcpBacklogSettings(void) {
         int somaxconn = atoi(buf);
         if (somaxconn > 0 && somaxconn < proxy.tcp_backlog) {
             proxyLogWarn("The TCP backlog setting of %d cannot be enforced "
-			 "because /proc/sys/net/core/somaxconn is set to the "
-			 "lower value of %d.\n", proxy.tcp_backlog, somaxconn);
+             "because /proc/sys/net/core/somaxconn is set to the "
+             "lower value of %d.\n", proxy.tcp_backlog, somaxconn);
         }
     }
     fclose(fp);
@@ -674,9 +687,12 @@ static void checkTcpBacklogSettings(void) {
 }
 
 static void initConfig(void) {
+    // 端口
     config.port = DEFAULT_PORT;
     config.tcpkeepalive = DEFAULT_TCP_KEEPALIVE;
+    // 最大连接数
     config.maxclients = DEFAULT_MAX_CLIENTS;
+    // 工作线程数
     config.num_threads = DEFAULT_THREADS;
     config.tcp_backlog = DEFAULT_TCP_BACKLOG;
     config.daemonize = 0;
@@ -694,14 +710,18 @@ static void initProxy(void) {
     proxy.min_reserved_fds = 10 + (config.num_threads * 3) +
                              (proxy.fd_count * 2);
     adjustOpenFilesLimit();
+
+    // 初始化命令列表
     /* Populate commands table. */
     proxy.commands = raxNew();
     int command_count = sizeof(redisCommandTable) / sizeof(redisCommandDef);
     for (i = 0; i < command_count; i++) {
         redisCommandDef *cmd = redisCommandTable + i;
-        raxInsert(proxy.commands, (unsigned char*) cmd->name,
+        raxInsert(proxy.commands, (unsigned char *) cmd->name,
                   strlen(cmd->name), cmd, NULL);
     }
+
+
     proxy.main_loop = aeCreateEventLoop(proxy.min_reserved_fds);
     proxy.threads = zmalloc(config.num_threads *
                             sizeof(proxyThread *));
@@ -718,7 +738,7 @@ static void initProxy(void) {
             exit(1);
         }
         pthread_t *t = &(proxy.threads[i]->thread);
-        if (pthread_create(t, NULL, execProxyThread, proxy.threads[i])){
+        if (pthread_create(t, NULL, execProxyThread, proxy.threads[i])) {
             fprintf(stderr, "FATAL: Failed to start thread %d.\n", i);
             exit(1);
         }
@@ -734,7 +754,7 @@ static void releaseProxy(void) {
     }
     if (proxy.threads != NULL) {
         for (i = 0; i < config.num_threads; i++) {
-            proxyThread *thread =  proxy.threads[i];
+            proxyThread *thread = proxy.threads[i];
             if (thread) freeProxyThread(thread);
             proxy.threads[i] = NULL;
         }
@@ -797,7 +817,7 @@ static int processThreadPipeBufferForNewClients(proxyThread *thread) {
     int processed = 0, count = buflen / msgsize, i;
     for (i = 0; i < count; i++) {
         char *p = thread->msgbuffer + (i * msgsize);
-        client **pc = (void*) p;
+        client **pc = (void *) p;
         c = (client *) *pc;
         aeEventLoop *el = thread->loop;
         listAddNodeTail(thread->clients, c);
@@ -873,6 +893,7 @@ static proxyThread *createProxyThread(int index) {
     int is_first = (index == 0);
     proxyThread *thread = zmalloc(sizeof(*thread));
     if (thread == NULL) return NULL;
+    // 初始化线程管道
     if (pipe(thread->io) == -1) {
         proxyLogErr("ERROR: failed to open pipe for thread!\n");
         zfree(thread);
@@ -927,8 +948,7 @@ static proxyThread *createProxyThread(int index) {
 }
 
 static void handlePendingAwakeMessages(aeEventLoop *el, int fd, void *privdata,
-                                       int mask)
-{
+                                       int mask) {
     UNUSED(el);
     UNUSED(fd);
     UNUSED(mask);
@@ -967,12 +987,11 @@ static int sendMessageToThread(proxyThread *thread, sds buf) {
         aeDeleteFileEvent(thread->loop, fd, AE_WRITABLE);
     } else goto install_write_handler;
     return 1;
-install_write_handler:
+    install_write_handler:
     sdsrange(buf, totwritten, -1);
     listAddNodeTail(thread->pending_messages, buf);
     if (aeCreateFileEvent(thread->loop, fd, AE_WRITABLE,
-        handlePendingAwakeMessages, thread) == AE_ERR)
-    {
+                          handlePendingAwakeMessages, thread) == AE_ERR) {
         proxyLogDebug("Failed to create thread awake write handler!\n");
         listNode *ln = listSearchKey(thread->pending_messages, buf);
         if (ln != NULL) listDelNode(thread->pending_messages, ln);
@@ -1127,7 +1146,7 @@ static void freeClient(client *c) {
     }
     listRelease(c->requests_to_process);
     if (c->unordered_replies)
-        raxFreeWithCallback(c->unordered_replies, (void (*)(void*))sdsfree);
+        raxFreeWithCallback(c->unordered_replies, (void (*)(void *)) sdsfree);
     zfree(c);
     proxy.numclients--;
 }
@@ -1166,8 +1185,7 @@ static int writeToClient(client *c) {
 }
 
 static void writeToClusterHandler(aeEventLoop *el, int fd, void *privdata,
-                                  int mask)
-{
+                                  int mask) {
     UNUSED(mask);
     clusterNode *node = privdata;
     redisContext *ctx = getClusterNodeContext(node);
@@ -1186,17 +1204,16 @@ static void writeToClusterHandler(aeEventLoop *el, int fd, void *privdata,
     }
     if (!node->connection->has_read_handler) {
         if (!installIOHandler(el, ctx->fd, AE_READABLE, readClusterReply,
-                              node, 0))
-        {
+                              node, 0)) {
             proxyLogErr("Failed to create read reply handler for node %s:%d\n",
-                          node->ip, node->port);
+                        node->ip, node->port);
             if (req != NULL) {
                 addReplyError(req->client, "Failed to read from cluster",
                               req->id);
                 freeRequest(req);
             }
             return;
-        } else  {
+        } else {
             node->connection->has_read_handler = 1;
             proxyLogDebug("Read reply handler installed "
                           "for node %s:%d\n", node->ip, node->port);
@@ -1255,7 +1272,7 @@ static int writeToCluster(aeEventLoop *el, int fd, clientRequest *req) {
              * free and the request itself and try to free the client
              * completely. */
             list *pending_queue =
-                node->connection->requests_pending;
+                    node->connection->requests_pending;
             listAddNodeTail(pending_queue, NULL);
             freeRequest(req);
             freeClient(c);
@@ -1381,12 +1398,17 @@ static int parseRequest(clientRequest *req) {
     char *p = req->buffer + req->query_offset, *nl = NULL;
     sds line = NULL;
     /* New request, so request type must be determinded. */
+    // 是否是多条命令
     if (req->is_multibulk == REQ_STATUS_UNKNOWN) {
         if (*p == '*') req->is_multibulk = 1;
         else req->is_multibulk = 0;
     }
+
+    // 如果是多条命令
     if (req->is_multibulk) {
         while (req->query_offset < buflen) {
+
+            // 场景1：若涉及多个命令的解析，则每条命令封装一个request对象
             if (*p == '*') {
                 if (req->num_commands > 0) {/*TODO: make it configuable */
                     /* Multiple commands, split into multiple requests */
@@ -1417,10 +1439,14 @@ static int parseRequest(clientRequest *req) {
                     req->current_bulk_length = REQ_STATUS_UNKNOWN;
                 }
             }
+
+            // 场景2：若buf读空，命令未解析完成，则跳到cleanup
             if (req->query_offset >= buflen) {
                 status = PARSE_STATUS_INCOMPLETE;
                 goto cleanup;
             }
+
+            // 场景3：解析当前命令
             long long lc = req->pending_bulks;
             if (lc == REQ_STATUS_UNKNOWN) {
                 nl = strchr(p, '\r');
@@ -1441,8 +1467,12 @@ static int parseRequest(clientRequest *req) {
                 }
                 p = req->buffer + req->query_offset;
             }
+
+            // 场景4：逐条解析当前命令的每个字段
             for (i = 0; i < lc; i++) {
                 int arglen = req->current_bulk_length;
+
+                // 解析当前字段的长度
                 if (arglen == REQ_STATUS_UNKNOWN) {
                     if (*p != '$') {
                         proxyLogErr("Failed to parse multibulk query: '$' not "
@@ -1472,6 +1502,8 @@ static int parseRequest(clientRequest *req) {
                     }
                     p = req->buffer + req->query_offset;
                 }
+
+                // 解析当前字段
                 if (arglen > 0) {
                     int newargc = req->argc + 1;
                     if (!requestMakeRoomForArgs(req, newargc)) {
@@ -1484,7 +1516,7 @@ static int parseRequest(clientRequest *req) {
                         goto cleanup;
                     }
                     int endarg = req->query_offset + arglen;
-                    if (endarg >= buflen || *(req->buffer+endarg) != '\r') {
+                    if (endarg >= buflen || *(req->buffer + endarg) != '\r') {
                         status = PARSE_STATUS_INCOMPLETE;
                         goto cleanup;
                     }
@@ -1504,7 +1536,9 @@ static int parseRequest(clientRequest *req) {
                 }
             }
         }
-    } else {
+    }
+    // 如果是单条命令
+    else {
         nl = strchr(p, '\n');
         if (nl == NULL) {
             status = PARSE_STATUS_INCOMPLETE;
@@ -1532,7 +1566,7 @@ static int parseRequest(clientRequest *req) {
         }
         status = PARSE_STATUS_OK;
     }
-cleanup:
+    cleanup:
     if (req->query_offset > buflen) req->query_offset = buflen;
     int remaining = buflen - req->query_offset;
     if (status == PARSE_STATUS_INCOMPLETE) {
@@ -1548,9 +1582,9 @@ static sds getRequestCommand(clientRequest *req) {
     if (req->argc == 0) return NULL;
     assert(req->buffer != NULL);
     int start = req->offsets[0], len = req->lengths[0],
-        buflen = sdslen(req->buffer);
+            buflen = sdslen(req->buffer);
     assert(start < buflen);
-    assert((start + len)  < buflen);
+    assert((start + len) < buflen);
     sds cmd = sdsnewlen(req->buffer + start, len);
     sdstolower(cmd);
     return cmd;
@@ -1560,15 +1594,17 @@ static clusterNode *getRequestNode(clientRequest *req, sds *err) {
     clusterNode *node = NULL;
     redisCluster *cluster = getCluster(req->client->thread_id);
     int slot = UNDEFINED_SLOT;
+    // 不涉及key的命令，直接取第一个节点
     if (req->argc == 1) {
         /*TODO: temporary behaviour */
         node = getFirstMappedNode(cluster);
         req->node = node;
         return node;
     }
+    // 涉及key的命令，取key所属slot对应的节点
     int first_key = req->command->first_key,
-        last_key = req->command->last_key,
-        key_step = req->command->key_step, i;
+            last_key = req->command->last_key,
+            key_step = req->command->key_step, i;
     if (first_key == 0) return NULL;
     else if (first_key >= req->argc) first_key = req->argc - 1;
     if (key_step < 1) key_step = 1;
@@ -1703,7 +1739,7 @@ static clientRequest *createRequest(client *c) {
     if (req == NULL) goto alloc_failure;
     req->client = c;
     req->buffer = sdsempty();
-    if (req->buffer ==  NULL) goto alloc_failure;
+    if (req->buffer == NULL) goto alloc_failure;
     req->query_offset = 0;
     req->is_multibulk = REQ_STATUS_UNKNOWN;
     req->pending_bulks = REQ_STATUS_UNKNOWN;
@@ -1729,7 +1765,7 @@ static clientRequest *createRequest(client *c) {
 
     proxyLogDebug("Created Request %llu:%llu\n", req->client->id, req->id);
     return req;
-alloc_failure:
+    alloc_failure:
     proxyLogErr("ERROR: Failed to allocate request!\n");
     if (!req) return NULL;
     freeRequest(req);
@@ -1741,8 +1777,7 @@ alloc_failure:
  * The 'retried' argument is used to ensure that resizing will be tried only
  * once. */
 static int installIOHandler(aeEventLoop *el, int fd, int mask, aeFileProc *proc,
-                            void *data, int retried)
-{
+                            void *data, int retried) {
     if (aeCreateFileEvent(el, fd, mask, proc, data) != AE_ERR) {
         return 1;
     } else {
@@ -1765,8 +1800,7 @@ static int installIOHandler(aeEventLoop *el, int fd, int mask, aeFileProc *proc,
  * write handler has been correctly installed.
  * Return 0 if the connection to the cluster node is missing and cannot be
  * established or if the write handler installation fails. */
-static int sendRequestToCluster(clientRequest *req, sds *errmsg)
-{
+static int sendRequestToCluster(clientRequest *req, sds *errmsg) {
     if (errmsg != NULL) *errmsg = NULL;
     if (req->has_write_handler) return 1;
     assert(req->node != NULL);
@@ -1807,15 +1841,14 @@ static int sendRequestToCluster(clientRequest *req, sds *errmsg)
     assert(conn != NULL);
     if (!conn->has_read_handler) {
         if (!installIOHandler(el, ctx->fd, AE_READABLE, readClusterReply,
-                              req->node, 0))
-        {
+                              req->node, 0)) {
             proxyLogErr("Failed to create read reply handler for node %s:%d\n",
-                          req->node->ip, req->node->port);
+                        req->node->ip, req->node->port);
             addReplyError(req->client, "Failed to read from cluster\n",
                           req->id);
             freeRequest(req);
             return 0;
-        } else  {
+        } else {
             conn->has_read_handler = 1;
             proxyLogDebug("Read reply handler installed "
                           "for node %s:%d\n", req->node->ip, req->node->port);
@@ -1857,6 +1890,7 @@ static clientRequest *handleNextRequestToCluster(clusterNode *node) {
 
 
 static int processRequest(clientRequest *req, int *parsing_status) {
+    // 报文解析为request对象
     int status = parseRequest(req);
     if (parsing_status != NULL) *parsing_status = status;
     if (status == PARSE_STATUS_ERROR) return 0;
@@ -1890,17 +1924,19 @@ static int processRequest(clientRequest *req, int *parsing_status) {
      * - Commands explictly having unsupported to 1
      * - Commands without explicit first_key offset */
     if (cmd == NULL || cmd->unsupported ||
-        (!cmd->handle && cmd->arity != 1 && !cmd->first_key)){
+        (!cmd->handle && cmd->arity != 1 && !cmd->first_key)) {
         errmsg = sdsnew("Unsupported command: ");
         errmsg = sdscatfmt(errmsg, "'%s'", command_name);
         proxyLogDebug("%s\n", errmsg);
         goto invalid_request;
     }
     req->command = cmd;
+    // 在proxy侧执行命令处理，成功则返回
     if (cmd->handle && cmd->handle(req) == PROXY_COMMAND_HANDLED) {
         if (command_name) sdsfree(command_name);
         return 1;
     }
+    // 查找执行命令的redis节点
     clusterNode *node = getRequestNode(req, &errmsg);
     if (node == NULL) {
         if (errmsg == NULL)
@@ -1912,7 +1948,7 @@ static int processRequest(clientRequest *req, int *parsing_status) {
     handleNextRequestToCluster(req->node);
     if (command_name) sdsfree(command_name);
     return 1;
-invalid_request:
+    invalid_request:
     if (command_name) sdsfree(command_name);
     if (errmsg != NULL) {
         addReplyError(c, (char *) errmsg, req->id);
@@ -1924,11 +1960,11 @@ invalid_request:
     return 0;
 }
 
-void readQuery(aeEventLoop *el, int fd, void *privdata, int mask){
+void readQuery(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(el);
     UNUSED(mask);
     client *c = (client *) privdata;
-    int nread, readlen = (1024*16);
+    int nread, readlen = (1024 * 16);
     clientRequest *req = c->current_request;
     if (req == NULL) {
         req = createRequest(c);
@@ -1990,8 +2026,7 @@ static void acceptHandler(int fd, char *ip) {
     }
 }
 
-void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
-{
+void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(el);
     UNUSED(mask);
     UNUSED(privdata);
@@ -2013,15 +2048,14 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 }
 
 static int processClusterReplyBuffer(redisContext *ctx, clusterNode *node,
-                                     int thread_id)
-{
+                                     int thread_id) {
     char *errmsg = NULL;
     void *_reply = NULL;
     redisReply *reply = NULL;
     int replies = 0;
     while (ctx->reader->len > 0) {
         int ok =
-            (__hiredisReadReplyFromBuffer(ctx->reader, &_reply) == REDIS_OK);
+                (__hiredisReadReplyFromBuffer(ctx->reader, &_reply) == REDIS_OK);
         if (!ok) {
             proxyLogErr("Error: %s\n", ctx->errstr);
             errmsg = "Failed to get reply";
@@ -2065,7 +2099,7 @@ static int processClusterReplyBuffer(redisContext *ctx, clusterNode *node,
             }
             addReplyRaw(req->client, obuf, len, req->id);
         }
-consume_buffer:
+        consume_buffer:
         if (config.dump_queues) dumpQueue(node, thread_id, QUEUE_TYPE_PENDING);
         /* Consume reader buffer */
         sdsrange(ctx->reader->buf, ctx->reader->pos, -1);
@@ -2079,8 +2113,7 @@ consume_buffer:
 }
 
 static void readClusterReply(aeEventLoop *el, int fd,
-                             void *privdata, int mask)
-{
+                             void *privdata, int mask) {
     UNUSED(mask);
     UNUSED(fd);
     proxyThread *thread = el->privdata;
@@ -2093,7 +2126,7 @@ static void readClusterReply(aeEventLoop *el, int fd,
     proxyLogDebug("Reading reply from %s:%d on thread %d...\n",
                   node->ip, node->port, thread_id);
     int success = (redisBufferRead(ctx) == REDIS_OK), replies = 0,
-                  node_disconnected = 0;
+            node_disconnected = 0;
     if (!success) {
         proxyLogDebug("Failed redisBufferRead from %s:%d on thread %d\n",
                       node->ip, node->port, thread_id);
@@ -2155,13 +2188,20 @@ void daemonize(void) {
     }
 }
 
+/**
+ * 程序入口
+ */
 int main(int argc, char **argv) {
     int exit_status = 0, i;
     signal(SIGPIPE, SIG_IGN);
     printf("Redis Cluster Proxy v%s\n", REDIS_CLUSTER_PROXY_VERSION);
+    // 初始化配置
     initConfig();
     proxy.configfile = NULL;
+    // 解析命令行参数
     int parsed_opts = parseOptions(argc, argv);
+
+    // 基于命令行参数指定集群地址更新配置
     char *config_cluster_addr = config.cluster_address;
     if (parsed_opts >= argc) {
         if (config_cluster_addr == NULL) {
@@ -2203,7 +2243,7 @@ int main(int argc, char **argv) {
     }
     proxy.start_time = time(NULL);
     aeMain(proxy.main_loop);
-cleanup:
+    cleanup:
     if (config_cluster_addr) sdsfree((sds) config_cluster_addr);
     releaseProxy();
     return exit_status;
